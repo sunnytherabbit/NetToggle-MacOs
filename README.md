@@ -20,12 +20,15 @@ global hotkey → NetToggle app → setuid root NetToggleHelper → dnctl + pfct
 - `Sources/NetToggle/` — Swift/ObjC-free AppKit menu-bar app.
 - `Helper/NetToggleHelper.c` — setuid-root C helper that calls `dnctl` and `pfctl`.
 - `install.sh` — compiles the helper, installs it to `/usr/local/bin`, and sets the setuid bit.
+- `make-app.sh` — builds a signed `NetToggle.app` bundle that you can drag to `/Applications`.
 
-## Build
+## Build the app bundle
 
 ```bash
-swift build -c release
+./make-app.sh
 ```
+
+This produces a signed `.build/release/NetToggle.app`. Drag that to `/Applications` (or run `cp -R .build/release/NetToggle.app /Applications/`).
 
 ## Install the root helper
 
@@ -46,8 +49,10 @@ If `/usr/local/bin` does not exist or you cannot write there, the script falls b
 
 ## Run
 
+After installing the helper and placing `NetToggle.app` in `/Applications`, launch it from Finder or run:
+
 ```bash
-.build/release/NetToggle
+open /Applications/NetToggle.app
 ```
 
 On first launch macOS will ask you to grant **Accessibility** access so the app can listen for global hotkeys. After granting it, **relaunch** the app.
@@ -62,7 +67,7 @@ Right-click the menu-bar icon (or open it from the status bar) to:
 
 - **“Helper not found or not executable”** — make sure `install.sh` completed successfully, or set `NETTOGGLE_HELPER` to the full path:
   ```bash
-  NETTOGGLE_HELPER=/path/to/NetToggleHelper .build/release/NetToggle
+  NETTOGGLE_HELPER=/path/to/NetToggleHelper /Applications/NetToggle.app/Contents/MacOS/NetToggle
   ```
 - **Hotkey does not work** — check *System Settings → Privacy & Security → Accessibility* and make sure `NetToggle` is enabled, then relaunch.
 - **Network does not change after toggle** — the helper may have been blocked by Gatekeeper. Try `sudo xattr -d com.apple.quarantine /usr/local/bin/NetToggleHelper` or run `install.sh` again.
