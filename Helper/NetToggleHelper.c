@@ -98,8 +98,8 @@ static int parse_profile(const char *delay_arg, const char *plr_arg,
 {
     char *end;
     long delay_ms = strtol(delay_arg, &end, 10);
-    if (end == delay_arg || *end != '\0' || delay_ms < 0 || delay_ms > 10000) {
-        fprintf(stderr, "Invalid delay (must be 0-10000 ms): %s\n", delay_arg);
+    if (end == delay_arg || *end != '\0' || delay_ms < 0 || delay_ms > 60000) {
+        fprintf(stderr, "Invalid delay (must be 0-60000 ms): %s\n", delay_arg);
         return 1;
     }
 

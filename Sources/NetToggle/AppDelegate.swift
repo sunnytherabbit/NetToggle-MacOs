@@ -145,8 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
             outPacketLoss = 0.90
         }
 
-        inDelayMs = max(0, min(10000, inDelayMs))
-        outDelayMs = max(0, min(10000, outDelayMs))
+        inDelayMs = max(0, min(60000, inDelayMs))
+        outDelayMs = max(0, min(60000, outDelayMs))
         inPacketLoss = max(0.0, min(1.0, inPacketLoss))
         outPacketLoss = max(0.0, min(1.0, outPacketLoss))
     }

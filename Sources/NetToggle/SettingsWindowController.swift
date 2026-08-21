@@ -232,8 +232,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func parseDelay(_ field: NSTextField) -> Int? {
-        guard let value = Int(field.stringValue), value >= 0, value <= 10000 else {
-            showAlert(message: "Delay must be an integer between 0 and 10000 ms.")
+        guard let value = Int(field.stringValue), value >= 0, value <= 60000 else {
+            showAlert(message: "Delay must be an integer between 0 and 60000 ms.")
             return nil
         }
         return value
