@@ -12,10 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
     private var statusLabelItem: NSMenuItem?
     private var toggleItem: NSMenuItem?
     private var hotkeyLabelItem: NSMenuItem?
-    private var profileLabelItem: NSMenuItem?
+    private var inProfileLabelItem: NSMenuItem?
+    private var outProfileLabelItem: NSMenuItem?
 
-    private var delayMs = 0
-    private var packetLoss = 0.90
+    private var inDelayMs = 0
+    private var inPacketLoss = 0.90
+    private var outDelayMs = 0
+    private var outPacketLoss = 0.90
 
     private let statusImage: NSImage? = {
         if #available(macOS 11.0, *) {
@@ -55,8 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         statusLabelItem = NSMenuItem(title: "Network: Off", action: nil, keyEquivalent: "")
         menu.addItem(statusLabelItem!)
 
-        profileLabelItem = NSMenuItem(title: "Profile: —", action: nil, keyEquivalent: "")
-        menu.addItem(profileLabelItem!)
+        inProfileLabelItem = NSMenuItem(title: "In: 0 ms / 0%", action: nil, keyEquivalent: "")
+        menu.addItem(inProfileLabelItem!)
+
+        outProfileLabelItem = NSMenuItem(title: "Out: 0 ms / 0%", action: nil, keyEquivalent: "")
+        menu.addItem(outProfileLabelItem!)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -82,10 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
     }
 
     private func updateMenu() {
-        guard let hotkeyManager = hotkeyManager else { return }
-
         statusLabelItem?.title = "Network: \(networkOn ? "On" : "Off")"
-        profileLabelItem?.title = String(format: "Profile: %d ms / %.0f%% loss", delayMs, packetLoss * 100)
+        inProfileLabelItem?.title = String(format: "In: %d ms / %.0f%%", inDelayMs, inPacketLoss * 100)
+        outProfileLabelItem?.title = String(format: "Out: %d ms / %.0f%%", outDelayMs, outPacketLoss * 100)
         toggleItem?.title = networkOn ? "Turn Network Off" : "Turn Network On"
 
         if let button = statusItem?.button {
@@ -96,30 +101,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
             }
         }
 
-        hotkeyLabelItem?.title = "Hotkey: \(formatHotkey(keyCode: UInt16(hotkeyManager.keyCode), flags: hotkeyManager.modifierFlags))"
+        if let hotkeyManager = hotkeyManager {
+            hotkeyLabelItem?.title = "Hotkey: \(formatHotkey(keyCode: UInt16(hotkeyManager.keyCode), flags: hotkeyManager.modifierFlags))"
+        }
     }
 
     private func loadSettings() {
         hotkeyManager = HotkeyManager(delegate: self)
 
-        delayMs = UserDefaults.standard.object(forKey: "delayMs") != nil
-            ? UserDefaults.standard.integer(forKey: "delayMs")
-            : 0
+        let defaults = UserDefaults.standard
 
-        if UserDefaults.standard.object(forKey: "packetLoss") != nil {
-            packetLoss = UserDefaults.standard.double(forKey: "packetLoss")
-        } else {
-            packetLoss = 0.90
+        // Migrate old single-direction settings.
+        if defaults.object(forKey: "delayMs") != nil {
+            let oldDelay = defaults.integer(forKey: "delayMs")
+            let oldPlr = defaults.double(forKey: "packetLoss")
+            if defaults.object(forKey: "inDelayMs") == nil {
+                inDelayMs = oldDelay
+                outDelayMs = oldDelay
+            }
+            if defaults.object(forKey: "inPacketLoss") == nil {
+                inPacketLoss = oldPlr
+                outPacketLoss = oldPlr
+            }
+            defaults.removeObject(forKey: "delayMs")
+            defaults.removeObject(forKey: "packetLoss")
         }
 
-        // Clamp to sensible defaults on first run
-        if delayMs < 0 || delayMs > 10000 { delayMs = 0 }
-        if packetLoss < 0 || packetLoss > 1 { packetLoss = 0.90 }
+        inDelayMs = defaults.object(forKey: "inDelayMs") != nil
+            ? defaults.integer(forKey: "inDelayMs")
+            : 0
+        if defaults.object(forKey: "inPacketLoss") != nil {
+            inPacketLoss = defaults.double(forKey: "inPacketLoss")
+        } else {
+            inPacketLoss = 0.90
+        }
+
+        outDelayMs = defaults.object(forKey: "outDelayMs") != nil
+            ? defaults.integer(forKey: "outDelayMs")
+            : 0
+        if defaults.object(forKey: "outPacketLoss") != nil {
+            outPacketLoss = defaults.double(forKey: "outPacketLoss")
+        } else {
+            outPacketLoss = 0.90
+        }
+
+        inDelayMs = max(0, min(10000, inDelayMs))
+        outDelayMs = max(0, min(10000, outDelayMs))
+        inPacketLoss = max(0.0, min(1.0, inPacketLoss))
+        outPacketLoss = max(0.0, min(1.0, outPacketLoss))
     }
 
     private func saveSettings() {
-        UserDefaults.standard.set(delayMs, forKey: "delayMs")
-        UserDefaults.standard.set(packetLoss, forKey: "packetLoss")
+        let defaults = UserDefaults.standard
+        defaults.set(inDelayMs, forKey: "inDelayMs")
+        defaults.set(inPacketLoss, forKey: "inPacketLoss")
+        defaults.set(outDelayMs, forKey: "outDelayMs")
+        defaults.set(outPacketLoss, forKey: "outPacketLoss")
     }
 
     private func formatHotkey(keyCode: UInt16, flags: UInt64) -> String {
@@ -152,44 +189,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
     @objc private func openSettings(_ sender: Any?) {
         hotkeyManager?.isPaused = true
 
-        if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(
-                keyCode: hotkeyManager?.keyCode ?? 37,
-                flags: UInt(hotkeyManager?.modifierFlags ?? 0x00100000),
-                delayMs: delayMs,
-                plr: packetLoss
-            )
-            settingsWindow?.onSave = { [weak self] code, flags, delay, plr in
-                self?.hotkeyManager?.updateHotkey(keyCode: code, modifierFlags: flags)
-                self?.delayMs = delay
-                self?.packetLoss = plr
-                self?.saveSettings()
-                self?.updateMenu()
-            }
-            settingsWindow?.onDone = { [weak self] in
-                self?.hotkeyManager?.isPaused = false
-            }
-        } else {
-            settingsWindow?.window?.close()
-            settingsWindow = SettingsWindowController(
-                keyCode: hotkeyManager?.keyCode ?? 37,
-                flags: UInt(hotkeyManager?.modifierFlags ?? 0x00100000),
-                delayMs: delayMs,
-                plr: packetLoss
-            )
-            settingsWindow?.onSave = { [weak self] code, flags, delay, plr in
-                self?.hotkeyManager?.updateHotkey(keyCode: code, modifierFlags: flags)
-                self?.delayMs = delay
-                self?.packetLoss = plr
-                self?.saveSettings()
-                self?.updateMenu()
-            }
-            settingsWindow?.onDone = { [weak self] in
-                self?.hotkeyManager?.isPaused = false
-            }
+        settingsWindow?.window?.close()
+
+        let settings = SettingsWindowController(
+            keyCode: hotkeyManager?.keyCode ?? 37,
+            flags: UInt(hotkeyManager?.modifierFlags ?? 0x00100000),
+            inDelayMs: inDelayMs,
+            inPlr: inPacketLoss,
+            outDelayMs: outDelayMs,
+            outPlr: outPacketLoss
+        )
+
+        settings.onSave = { [weak self] code, flags, inDelay, inPlr, outDelay, outPlr in
+            self?.hotkeyManager?.updateHotkey(keyCode: code, modifierFlags: flags)
+            self?.inDelayMs = inDelay
+            self?.inPacketLoss = inPlr
+            self?.outDelayMs = outDelay
+            self?.outPacketLoss = outPlr
+            self?.saveSettings()
+            self?.updateMenu()
         }
 
-        settingsWindow?.show()
+        settings.onDone = { [weak self] in
+            self?.settingsWindow = nil
+            self?.hotkeyManager?.isPaused = false
+        }
+
+        settingsWindow = settings
+        settings.show()
     }
 
     @objc private func toggleNetwork(_ sender: Any?) {
@@ -197,20 +224,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         helperRunning = true
 
         let command = networkOn ? "off" : "on"
-        HelperRunner.default.run(command: command, delayMs: delayMs, packetLoss: packetLoss) { [weak self] success, message in
-            self?.helperRunning = false
-            if success {
-                self?.networkOn = !(self?.networkOn ?? false)
-                self?.updateMenu()
-            } else {
-                self?.showError(message)
+        if command == "on" {
+            HelperRunner.default.run(
+                command: "on",
+                inDelayMs: inDelayMs,
+                inPacketLoss: inPacketLoss,
+                outDelayMs: outDelayMs,
+                outPacketLoss: outPacketLoss
+            ) { [weak self] success, message in
+                self?.helperRunning = false
+                if success {
+                    self?.networkOn = !(self?.networkOn ?? false)
+                    self?.updateMenu()
+                } else {
+                    self?.showError(message)
+                }
+            }
+        } else {
+            HelperRunner.default.run(command: "off") { [weak self] success, message in
+                self?.helperRunning = false
+                if success {
+                    self?.networkOn = false
+                    self?.updateMenu()
+                } else {
+                    self?.showError(message)
+                }
             }
         }
     }
 
     @objc private func quit(_ sender: Any?) {
         if networkOn {
-            HelperRunner.default.run(command: "off", delayMs: delayMs, packetLoss: packetLoss) { _, _ in
+            HelperRunner.default.run(command: "off") { [weak self] _, _ in
+                self?.networkOn = false
                 NSApp.terminate(nil)
             }
         } else {

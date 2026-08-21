@@ -20,7 +20,14 @@ final class HelperRunner {
         return candidates[0]
     }
 
-    func run(command: String, delayMs: Int = 0, packetLoss: Double = 0.0, completion: @escaping (Bool, String) -> Void) {
+    func run(
+        command: String,
+        inDelayMs: Int = 0,
+        inPacketLoss: Double = 0.0,
+        outDelayMs: Int = 0,
+        outPacketLoss: Double = 0.0,
+        completion: @escaping (Bool, String) -> Void
+    ) {
         let path = helperPath
 
         guard FileManager.default.isExecutableFile(atPath: path) else {
@@ -32,7 +39,13 @@ final class HelperRunner {
         process.executableURL = URL(fileURLWithPath: path)
 
         if command == "on" {
-            process.arguments = ["on", "\(delayMs)", "\(packetLoss)"]
+            process.arguments = [
+                "on",
+                "\(inDelayMs)",
+                "\(inPacketLoss)",
+                "\(outDelayMs)",
+                "\(outPacketLoss)"
+            ]
         } else {
             process.arguments = ["off"]
         }

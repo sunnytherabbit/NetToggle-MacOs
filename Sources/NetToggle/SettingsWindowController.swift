@@ -3,34 +3,51 @@ import Cocoa
 final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     private var initialKeyCode: Int
     private var initialFlags: UInt
-    private var initialDelayMs: Int
-    private var initialPlr: Double
+    private var initialInDelayMs: Int
+    private var initialInPlr: Double
+    private var initialOutDelayMs: Int
+    private var initialOutPlr: Double
 
     private let captureView = KeyCaptureView()
     private let infoLabel = NSTextField(labelWithString: "Click below, then press the hotkey you want to use.")
-    private let delayField = NSTextField()
-    private let plrField = NSTextField()
-    private let plrSlider = NSSlider()
+
+    private let inDelayField = NSTextField()
+    private let inPlrField = NSTextField()
+    private let inPlrSlider = NSSlider()
+
+    private let outDelayField = NSTextField()
+    private let outPlrField = NSTextField()
+    private let outPlrSlider = NSSlider()
+
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
 
     private var capturedKeyCode: Int
     private var capturedFlags: UInt
 
-    var onSave: ((Int, UInt, Int, Double) -> Void)?
+    var onSave: ((Int, UInt, Int, Double, Int, Double) -> Void)?
     var onDone: (() -> Void)?
 
-    init(keyCode: Int, flags: UInt, delayMs: Int, plr: Double) {
+    init(
+        keyCode: Int,
+        flags: UInt,
+        inDelayMs: Int,
+        inPlr: Double,
+        outDelayMs: Int,
+        outPlr: Double
+    ) {
         self.initialKeyCode = keyCode
         self.initialFlags = flags
-        self.initialDelayMs = delayMs
-        self.initialPlr = plr
+        self.initialInDelayMs = inDelayMs
+        self.initialInPlr = inPlr
+        self.initialOutDelayMs = outDelayMs
+        self.initialOutPlr = outPlr
 
         self.capturedKeyCode = keyCode
         self.capturedFlags = flags
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 460),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -49,10 +66,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func setupContent() {
         guard let contentView = window?.contentView else { return }
 
-        infoLabel.frame = NSRect(x: 20, y: 260, width: 440, height: 24)
+        infoLabel.frame = NSRect(x: 20, y: 420, width: 520, height: 24)
         infoLabel.alignment = .center
 
-        captureView.frame = NSRect(x: 20, y: 180, width: 440, height: 70)
+        captureView.frame = NSRect(x: 20, y: 345, width: 520, height: 70)
         captureView.wantsLayer = true
         captureView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         captureView.layer?.borderColor = NSColor.gray.cgColor
@@ -62,61 +79,95 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             self?.handleKey(event)
         }
 
-        let hotkeyNote = NSTextField(labelWithString: "The profile is applied in both directions to all traffic.")
-        hotkeyNote.frame = NSRect(x: 20, y: 155, width: 440, height: 18)
-        hotkeyNote.alignment = .center
-        hotkeyNote.textColor = .secondaryLabelColor
-        hotkeyNote.font = NSFont.systemFont(ofSize: 11)
+        let note = NSTextField(labelWithString: "Traffic can be shaped differently for each direction.")
+        note.frame = NSRect(x: 20, y: 320, width: 520, height: 18)
+        note.alignment = .center
+        note.textColor = .secondaryLabelColor
+        note.font = NSFont.systemFont(ofSize: 11)
 
-        let delayLabel = NSTextField(labelWithString: "Delay (ms):")
-        delayLabel.frame = NSRect(x: 20, y: 125, width: 100, height: 22)
-        delayLabel.alignment = .right
+        // Inbound column
+        let inTitle = sectionTitle("Inbound", y: 300)
+        let inDelayLabel = label("Delay (ms):", y: 270, align: .right)
+        inDelayField.frame = NSRect(x: 130, y: 268, width: 80, height: 24)
+        inDelayField.stringValue = "\(initialInDelayMs)"
+        inDelayField.alignment = .center
+        inDelayField.delegate = self
 
-        delayField.frame = NSRect(x: 130, y: 123, width: 80, height: 24)
-        delayField.stringValue = "\(initialDelayMs)"
-        delayField.alignment = .center
-        delayField.delegate = self
+        let inPlrLabel = label("Loss %:", y: 240, align: .right)
+        inPlrField.frame = NSRect(x: 130, y: 238, width: 80, height: 24)
+        inPlrField.stringValue = String(format: "%.0f", initialInPlr * 100)
+        inPlrField.alignment = .center
+        inPlrField.delegate = self
 
-        let plrLabel = NSTextField(labelWithString: "Packet loss %:")
-        plrLabel.frame = NSRect(x: 230, y: 125, width: 100, height: 22)
-        plrLabel.alignment = .right
+        inPlrSlider.frame = NSRect(x: 20, y: 205, width: 240, height: 24)
+        inPlrSlider.minValue = 0.0
+        inPlrSlider.maxValue = 100.0
+        inPlrSlider.isContinuous = true
+        inPlrSlider.target = self
+        inPlrSlider.action = #selector(inPlrSliderChanged(_:))
+        inPlrSlider.doubleValue = initialInPlr * 100
 
-        plrField.frame = NSRect(x: 340, y: 123, width: 80, height: 24)
-        plrField.stringValue = String(format: "%.0f", initialPlr * 100)
-        plrField.alignment = .center
-        plrField.delegate = self
+        // Outbound column
+        let outTitle = sectionTitle("Outbound", y: 300, x: 290)
+        let outDelayLabel = label("Delay (ms):", y: 270, x: 290, align: .right)
+        outDelayField.frame = NSRect(x: 400, y: 268, width: 80, height: 24)
+        outDelayField.stringValue = "\(initialOutDelayMs)"
+        outDelayField.alignment = .center
+        outDelayField.delegate = self
 
-        plrSlider.frame = NSRect(x: 20, y: 85, width: 440, height: 24)
-        plrSlider.minValue = 0.0
-        plrSlider.maxValue = 100.0
-        plrSlider.isContinuous = true
-        plrSlider.target = self
-        plrSlider.action = #selector(sliderChanged(_:))
-        plrSlider.doubleValue = initialPlr * 100
+        let outPlrLabel = label("Loss %:", y: 240, x: 290, align: .right)
+        outPlrField.frame = NSRect(x: 400, y: 238, width: 80, height: 24)
+        outPlrField.stringValue = String(format: "%.0f", initialOutPlr * 100)
+        outPlrField.alignment = .center
+        outPlrField.delegate = self
 
-        let plrHint = NSTextField(labelWithString: "0% = no loss, 100% = drop everything")
-        plrHint.frame = NSRect(x: 20, y: 62, width: 440, height: 18)
-        plrHint.alignment = .center
-        plrHint.textColor = .secondaryLabelColor
-        plrHint.font = NSFont.systemFont(ofSize: 11)
+        outPlrSlider.frame = NSRect(x: 300, y: 205, width: 240, height: 24)
+        outPlrSlider.minValue = 0.0
+        outPlrSlider.maxValue = 100.0
+        outPlrSlider.isContinuous = true
+        outPlrSlider.target = self
+        outPlrSlider.action = #selector(outPlrSliderChanged(_:))
+        outPlrSlider.doubleValue = initialOutPlr * 100
 
-        saveButton.frame = NSRect(x: 300, y: 18, width: 70, height: 28)
+        let hint = NSTextField(labelWithString: "0% = no loss, 100% = drop everything")
+        hint.frame = NSRect(x: 20, y: 170, width: 520, height: 18)
+        hint.alignment = .center
+        hint.textColor = .secondaryLabelColor
+        hint.font = NSFont.systemFont(ofSize: 11)
+
+        saveButton.frame = NSRect(x: 380, y: 18, width: 70, height: 28)
         saveButton.bezelStyle = .rounded
         saveButton.target = self
         saveButton.action = #selector(save(_:))
 
-        cancelButton.frame = NSRect(x: 380, y: 18, width: 80, height: 28)
+        cancelButton.frame = NSRect(x: 460, y: 18, width: 80, height: 28)
         cancelButton.bezelStyle = .rounded
         cancelButton.target = self
         cancelButton.action = #selector(cancel(_:))
 
-        [infoLabel, captureView, hotkeyNote,
-         delayLabel, delayField, plrLabel, plrField,
-         plrSlider, plrHint, saveButton, cancelButton].forEach {
+        [infoLabel, captureView, note,
+         inTitle, inDelayLabel, inDelayField, inPlrLabel, inPlrField, inPlrSlider,
+         outTitle, outDelayLabel, outDelayField, outPlrLabel, outPlrField, outPlrSlider,
+         hint, saveButton, cancelButton].forEach {
             contentView.addSubview($0)
         }
 
         updateInfoLabel()
+    }
+
+    private func label(_ string: String, y: CGFloat, x: CGFloat = 20, align: NSTextAlignment = .left) -> NSTextField {
+        let field = NSTextField(labelWithString: string)
+        field.frame = NSRect(x: x, y: y, width: 100, height: 22)
+        field.alignment = align
+        return field
+    }
+
+    private func sectionTitle(_ string: String, y: CGFloat, x: CGFloat = 20) -> NSTextField {
+        let field = NSTextField(labelWithString: string)
+        field.frame = NSRect(x: x, y: y, width: 240, height: 24)
+        field.alignment = .center
+        field.font = NSFont.boldSystemFont(ofSize: 13)
+        return field
     }
 
     func show() {
@@ -138,38 +189,62 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         infoLabel.stringValue = "Hotkey: \(desc)"
     }
 
-    @objc private func sliderChanged(_ sender: Any?) {
-        let pct = plrSlider.doubleValue
-        plrField.stringValue = String(format: "%.0f", pct)
+    @objc private func inPlrSliderChanged(_ sender: Any?) {
+        let pct = inPlrSlider.doubleValue
+        inPlrField.stringValue = String(format: "%.0f", pct)
+    }
+
+    @objc private func outPlrSliderChanged(_ sender: Any?) {
+        let pct = outPlrSlider.doubleValue
+        outPlrField.stringValue = String(format: "%.0f", pct)
     }
 
     func controlTextDidChange(_ obj: Notification) {
         if let field = obj.object as? NSTextField {
-            if field === plrField {
-                if let pct = Double(plrField.stringValue) {
-                    plrSlider.doubleValue = max(0, min(100, pct))
+            if field === inPlrField {
+                if let pct = Double(inPlrField.stringValue) {
+                    inPlrSlider.doubleValue = max(0, min(100, pct))
+                }
+            } else if field === outPlrField {
+                if let pct = Double(outPlrField.stringValue) {
+                    outPlrSlider.doubleValue = max(0, min(100, pct))
                 }
             }
         }
     }
 
     @objc private func save(_ sender: Any?) {
-        guard let delay = Int(delayField.stringValue), delay >= 0, delay <= 10000 else {
-            showAlert(message: "Delay must be an integer between 0 and 10000 ms.")
-            return
-        }
-        guard let pct = Double(plrField.stringValue) else {
-            showAlert(message: "Packet loss must be a number between 0 and 100.")
-            return
-        }
-        let plr = max(0.0, min(1.0, pct / 100.0))
+        let inDelay = parseDelay(inDelayField)
+        let inPlr = parsePlr(inPlrField)
+        let outDelay = parseDelay(outDelayField)
+        let outPlr = parsePlr(outPlrField)
 
-        onSave?(capturedKeyCode, capturedFlags, delay, plr)
+        guard let inD = inDelay, let inP = inPlr, let outD = outDelay, let outP = outPlr else {
+            return
+        }
+
+        onSave?(capturedKeyCode, capturedFlags, inD, inP, outD, outP)
         window?.close()
     }
 
     @objc private func cancel(_ sender: Any?) {
         window?.close()
+    }
+
+    private func parseDelay(_ field: NSTextField) -> Int? {
+        guard let value = Int(field.stringValue), value >= 0, value <= 10000 else {
+            showAlert(message: "Delay must be an integer between 0 and 10000 ms.")
+            return nil
+        }
+        return value
+    }
+
+    private func parsePlr(_ field: NSTextField) -> Double? {
+        guard let pct = Double(field.stringValue) else {
+            showAlert(message: "Packet loss must be a number between 0 and 100.")
+            return nil
+        }
+        return max(0.0, min(1.0, pct / 100.0))
     }
 
     private func showAlert(message: String) {

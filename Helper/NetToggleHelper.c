@@ -6,7 +6,7 @@
  *   chmod u+s NetToggleHelper
  *
  * Usage:
- *   NetToggleHelper on  <delay_ms> <plr>
+ *   NetToggleHelper on <in_delay_ms> <in_plr> <out_delay_ms> <out_plr>
  *   NetToggleHelper off
  *
  * It is intentionally small and self-contained: it does not read
@@ -26,8 +26,8 @@
 #define PIPE_OUT 65001
 
 /* Default profile if no arguments are supplied. */
-#define DEFAULT_DELAY_MS "0"
-#define DEFAULT_PLR      "0.90"
+#define DEFAULT_DELAY "0"
+#define DEFAULT_PLR   "0.90"
 
 static int run_program_silent(const char *path, char *const argv[])
 {
@@ -93,13 +93,13 @@ static int write_rules_and_load(const char *rules)
     return rc;
 }
 
-static int parse_profile(const char *delay_ms_arg, const char *plr_arg,
+static int parse_profile(const char *delay_arg, const char *plr_arg,
                          long *delay_ms_out, double *plr_out)
 {
     char *end;
-    long delay_ms = strtol(delay_ms_arg, &end, 10);
-    if (end == delay_ms_arg || *end != '\0' || delay_ms < 0 || delay_ms > 10000) {
-        fprintf(stderr, "Invalid delay (must be 0-10000 ms): %s\n", delay_ms_arg);
+    long delay_ms = strtol(delay_arg, &end, 10);
+    if (end == delay_arg || *end != '\0' || delay_ms < 0 || delay_ms > 10000) {
+        fprintf(stderr, "Invalid delay (must be 0-10000 ms): %s\n", delay_arg);
         return 1;
     }
 
@@ -114,20 +114,23 @@ static int parse_profile(const char *delay_ms_arg, const char *plr_arg,
     return 0;
 }
 
-static int do_on(long delay_ms, double plr)
+static int do_on(long in_delay_ms, double in_plr,
+                 long out_delay_ms, double out_plr)
 {
-    char delay_str[32];
-    char plr_str[32];
-    snprintf(delay_str, sizeof(delay_str), "%ldms", delay_ms);
-    snprintf(plr_str, sizeof(plr_str), "%.6f", plr);
+    char in_delay_str[32], in_plr_str[32];
+    char out_delay_str[32], out_plr_str[32];
+    snprintf(in_delay_str, sizeof(in_delay_str), "%ldms", in_delay_ms);
+    snprintf(in_plr_str, sizeof(in_plr_str), "%.6f", in_plr);
+    snprintf(out_delay_str, sizeof(out_delay_str), "%ldms", out_delay_ms);
+    snprintf(out_plr_str, sizeof(out_plr_str), "%.6f", out_plr);
 
     char *dnctl_argv_in[] = {
         "/usr/sbin/dnctl", "-q", "pipe", "65000", "config",
-        "delay", delay_str, "plr", plr_str, NULL
+        "delay", in_delay_str, "plr", in_plr_str, NULL
     };
     char *dnctl_argv_out[] = {
         "/usr/sbin/dnctl", "-q", "pipe", "65001", "config",
-        "delay", delay_str, "plr", plr_str, NULL
+        "delay", out_delay_str, "plr", out_plr_str, NULL
     };
 
     if (run_program_silent("/usr/sbin/dnctl", dnctl_argv_in) != 0) {
@@ -174,20 +177,23 @@ int main(int argc, char *argv[])
     }
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s on <delay_ms> <plr> | off\n", argv[0]);
+        fprintf(stderr, "Usage: %s on <in_delay> <in_plr> <out_delay> <out_plr> | off\n", argv[0]);
         return 1;
     }
 
     if (strcmp(argv[1], "on") == 0) {
-        const char *delay_arg = (argc > 2) ? argv[2] : DEFAULT_DELAY_MS;
-        const char *plr_arg = (argc > 3) ? argv[3] : DEFAULT_PLR;
+        const char *in_delay  = (argc > 2) ? argv[2] : DEFAULT_DELAY;
+        const char *in_plr    = (argc > 3) ? argv[3] : DEFAULT_PLR;
+        const char *out_delay = (argc > 4) ? argv[4] : DEFAULT_DELAY;
+        const char *out_plr   = (argc > 5) ? argv[5] : DEFAULT_PLR;
 
-        long delay_ms;
-        double plr;
-        if (parse_profile(delay_arg, plr_arg, &delay_ms, &plr) != 0) {
+        long in_delay_ms, out_delay_ms;
+        double in_plr_v, out_plr_v;
+        if (parse_profile(in_delay, in_plr, &in_delay_ms, &in_plr_v) != 0 ||
+            parse_profile(out_delay, out_plr, &out_delay_ms, &out_plr_v) != 0) {
             return 1;
         }
-        return do_on(delay_ms, plr);
+        return do_on(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
     } else if (strcmp(argv[1], "off") == 0) {
         return do_off();
     } else {

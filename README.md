@@ -13,7 +13,8 @@ global hotkey → NetToggle app → setuid root NetToggleHelper → dnctl + pfct
 - Runs as a tiny menu-bar app.
 - Captures a global key combination of your choice (needs Accessibility permission).
 - Toggles a `dnctl`/`pfctl` network profile on/off on every key press.
-- Default profile in the helper is **0 ms delay + 90% packet loss** for all traffic. Open the app’s **Settings...** window to change it on the fly, or edit `Helper/NetToggleHelper.c` and re-run `install.sh` to change the hard-coded defaults.
+- Shapes **inbound and outbound traffic independently**.
+- Default profile is **0 ms delay + 90% packet loss** in both directions. Open the app’s **Settings...** window to change both directions on the fly.
 
 ## Files
 
@@ -59,7 +60,7 @@ On first launch macOS will ask you to grant **Accessibility** access so the app 
 
 Right-click the menu-bar icon (or open it from the status bar) to:
 
-- **Settings...** — set the global hotkey, delay (ms), and packet loss %.
+- **Settings...** — set the global hotkey, inbound delay/loss, and outbound delay/loss.
 - **Toggle Network** — turn the network profile on/off manually.
 - **Quit** — exit and automatically turn the profile off if it is active.
 
@@ -76,9 +77,9 @@ Right-click the menu-bar icon (or open it from the status bar) to:
 ## Warnings
 
 - This is a **proof-of-concept**. The helper runs with root privileges via `setuid`. Only use it on your own machine and review the code before granting root.
-- The profile applies to **all traffic** by default (TCP/UDP/ICMP, both directions). If you only want Roblox traffic, you will need to filter by host/port/UID in `NetToggleHelper.c` and rebuild.
+- The profile applies to **all traffic** by default (TCP/UDP/ICMP, both directions, with per-direction settings). If you only want Roblox traffic, you will need to filter by host/port/UID in `NetToggleHelper.c` and rebuild.
 - Toggling the network profile uses `pfctl -f`, which temporarily replaces the running PF ruleset. The helper restores the default `/etc/pf.conf` when turned off.
 
 ## Customizing the profile
 
-Edit `Helper/NetToggleHelper.c` near the `DELAY_MS` and `PLR` defines, or change the `rules` string to use different dummynet pipes. Then run `./install.sh` again.
+Edit `Helper/NetToggleHelper.c` and adjust the `DEFAULT_DELAY` and `DEFAULT_PLR` macros, or change the `rules` string to use different dummynet pipes. Then run `./install.sh` again.
