@@ -41,6 +41,12 @@
 #define ROBLOX_TABLE_FILE "/tmp/nettoggle_roblox_ips"
 #define ROBLOX_TABLE_NAME "nettoggle_roblox"
 
+static const char *roblox_ruleset =
+    "include \"/etc/pf.conf\"\n"
+    "table <" ROBLOX_TABLE_NAME "> persist file \"" ROBLOX_TABLE_FILE "\"\n"
+    "dummynet out quick proto {tcp, udp} from any to <" ROBLOX_TABLE_NAME "> pipe 65001\n"
+    "dummynet in quick proto {tcp, udp} from <" ROBLOX_TABLE_NAME "> to any pipe 65000\n";
+
 static int run_program_silent(const char *path, char *const argv[])
 {
     int nullfd = open("/dev/null", O_WRONLY);
@@ -247,6 +253,37 @@ static int write_ips_to_table_file(char **ips, int count)
     return 0;
 }
 
+/*
+ * Check whether the dummynet rules referencing nettoggle_roblox are still
+ * loaded. On macOS something else (a VPN reconnect, firewall refresh, etc.)
+ * may flush the ruleset without killing the persistent table, leaving the
+ * table populated but the shaping rules gone.
+ */
+static int ruleset_is_loaded(void)
+{
+    FILE *fp = popen("/sbin/pfctl -s dummynet", "r");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    char line[512];
+    int found = 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strstr(line, ROBLOX_TABLE_NAME) != NULL) {
+            found = 1;
+            break;
+        }
+    }
+
+    int status = pclose(fp);
+    return found && (status == 0 || WEXITSTATUS(status) == 0);
+}
+
+static int load_roblox_ruleset(void)
+{
+    return write_rules_and_load(roblox_ruleset);
+}
+
 static int do_on(long in_delay_ms, double in_plr,
                  long out_delay_ms, double out_plr)
 {
@@ -291,30 +328,18 @@ static int do_target(long in_delay_ms, double in_plr,
         return 1;
     }
 
-    /*
-     * Load a dummynet ruleset that references a PF table. The table is
-     * populated from a separate file so we can refresh it without flushing
-     * the whole ruleset every time the Roblox IP list changes.
-     */
-    const char *rules =
-        "include \"/etc/pf.conf\"\n"
-        "table <" ROBLOX_TABLE_NAME "> persist file \"" ROBLOX_TABLE_FILE "\"\n"
-        "dummynet out quick proto {tcp, udp} from any to <" ROBLOX_TABLE_NAME "> pipe 65001\n"
-        "dummynet in quick proto {tcp, udp} from <" ROBLOX_TABLE_NAME "> to any pipe 65000\n";
-
-    int rc = write_rules_and_load(rules);
-    free_ips(ips, count);
-
-    if (rc != 0) {
+    if (load_roblox_ruleset() != 0) {
         fprintf(stderr, "pfctl rule load failed\n");
+        free_ips(ips, count);
         return 1;
     }
 
+    free_ips(ips, count);
     return 0;
 }
 
 static int do_target_refresh(long in_delay_ms, double in_plr,
-                              long out_delay_ms, double out_plr)
+                             long out_delay_ms, double out_plr)
 {
     char *ips[MAX_IPS];
     int count = 0;
@@ -340,18 +365,28 @@ static int do_target_refresh(long in_delay_ms, double in_plr,
         return 1;
     }
 
-    /* Replace the existing table contents without flushing the ruleset. */
+    /*
+     * Try to replace the table contents without flushing the ruleset. If the
+     * ruleset has been flushed by the OS/VPN, the table may still exist, so
+     * also check and reload the full ruleset if the dummynet rules are gone.
+     */
     char *pfctl_argv[] = {
         "/sbin/pfctl", "-q", "-t", ROBLOX_TABLE_NAME, "-T", "replace", "-f", ROBLOX_TABLE_FILE, NULL
     };
     int rc = run_program_silent("/sbin/pfctl", pfctl_argv);
-    free_ips(ips, count);
-
     if (rc != 0) {
-        fprintf(stderr, "pfctl table replace failed\n");
-        return 1;
+        fprintf(stderr, "pfctl table replace failed, will reload ruleset\n");
     }
 
+    if (!ruleset_is_loaded()) {
+        if (load_roblox_ruleset() != 0) {
+            fprintf(stderr, "pfctl rule load failed\n");
+            free_ips(ips, count);
+            return 1;
+        }
+    }
+
+    free_ips(ips, count);
     return 0;
 }
 
