@@ -237,8 +237,7 @@ static int do_on(long in_delay_ms, double in_plr,
 }
 
 static int do_target(long in_delay_ms, double in_plr,
-                     long out_delay_ms, double out_plr,
-                     const char *table_name)
+                     long out_delay_ms, double out_plr)
 {
     char *ips[MAX_IPS];
     int count = 0;
@@ -258,8 +257,12 @@ static int do_target(long in_delay_ms, double in_plr,
         return 1;
     }
 
-    /* Build a ruleset with a PF table of target IPs. */
-    size_t rules_size = 8192;
+    /*
+     * Build explicit dummynet rules for each IP instead of using a PF table.
+     * Tables are convenient, but on macOS a table may not reliably refresh
+     * its contents across ruleset reloads, so per-IP rules are more robust.
+     */
+    size_t rules_size = 131072; /* enough for 256 IPs */
     char *rules = malloc(rules_size);
     if (rules == NULL) {
         free_ips(ips, count);
@@ -267,25 +270,29 @@ static int do_target(long in_delay_ms, double in_plr,
     }
 
     size_t pos = 0;
-#define APPEND(...) do { \
-        int n = snprintf(rules + pos, rules_size - pos, __VA_ARGS__); \
-        if (n < 0 || (size_t)n >= rules_size - pos) { \
-            fprintf(stderr, "Ruleset too large\n"); \
-            free(rules); free_ips(ips, count); return 1; \
-        } \
-        pos += (size_t)n; \
-    } while (0)
+    int ok = 1;
 
-    APPEND("include \"/etc/pf.conf\"\n");
-    APPEND("table <%s> persist { ", table_name);
-    for (int i = 0; i < count; i++) {
-        APPEND("%s%s", ips[i], (i < count - 1) ? ", " : "");
+    pos += (size_t)snprintf(rules + pos, rules_size - pos, "include \"/etc/pf.conf\"\n");
+    if (pos >= rules_size) ok = 0;
+
+    for (int i = 0; i < count && ok; i++) {
+        size_t n = (size_t)snprintf(rules + pos, rules_size - pos,
+            "dummynet out quick proto {tcp, udp} from any to %s pipe 65001\n", ips[i]);
+        if (n >= rules_size - pos) { ok = 0; break; }
+        pos += n;
+
+        n = (size_t)snprintf(rules + pos, rules_size - pos,
+            "dummynet in quick proto {tcp, udp} from %s to any pipe 65000\n", ips[i]);
+        if (n >= rules_size - pos) { ok = 0; break; }
+        pos += n;
     }
-    APPEND(" }\n");
-    APPEND("dummynet out quick proto {tcp, udp} from any to <%s> pipe 65001\n", table_name);
-    APPEND("dummynet in quick proto {tcp, udp} from <%s> to any pipe 65000\n", table_name);
 
-#undef APPEND
+    if (!ok) {
+        fprintf(stderr, "Ruleset too large\n");
+        free(rules);
+        free_ips(ips, count);
+        return 1;
+    }
 
     int rc = write_rules_and_load(rules);
     free(rules);
@@ -341,7 +348,7 @@ int main(int argc, char *argv[])
         }
 
         if (is_target) {
-            return do_target(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v, "nettoggle_roblox");
+            return do_target(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
         } else {
             return do_on(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
         }
