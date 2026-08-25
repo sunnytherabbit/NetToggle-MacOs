@@ -313,7 +313,8 @@ static int do_target(long in_delay_ms, double in_plr,
     return 0;
 }
 
-static int do_target_refresh(void)
+static int do_target_refresh(long in_delay_ms, double in_plr,
+                              long out_delay_ms, double out_plr)
 {
     char *ips[MAX_IPS];
     int count = 0;
@@ -327,6 +328,11 @@ static int do_target_refresh(void)
         /* Not an error: Roblox may momentarily have no connections. */
         free_ips(ips, count);
         return 0;
+    }
+
+    if (config_pipes(in_delay_ms, in_plr, out_delay_ms, out_plr) != 0) {
+        free_ips(ips, count);
+        return 1;
     }
 
     if (write_ips_to_table_file(ips, count) != 0) {
@@ -383,11 +389,7 @@ int main(int argc, char *argv[])
     int is_target = (strcmp(argv[1], "roblox") == 0);
     int is_refresh = (strcmp(argv[1], "roblox-refresh") == 0);
 
-    if (is_refresh) {
-        return do_target_refresh();
-    }
-
-    if (strcmp(argv[1], "on") == 0 || is_target) {
+    if (is_refresh || is_target || strcmp(argv[1], "on") == 0) {
         const char *in_delay  = (argc > 2) ? argv[2] : DEFAULT_DELAY;
         const char *in_plr    = (argc > 3) ? argv[3] : DEFAULT_PLR;
         const char *out_delay = (argc > 4) ? argv[4] : DEFAULT_DELAY;
@@ -400,12 +402,18 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        if (is_refresh) {
+            return do_target_refresh(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
+        }
+
         if (is_target) {
             return do_target(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
-        } else {
-            return do_on(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
         }
-    } else if (strcmp(argv[1], "off") == 0) {
+
+        return do_on(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
+    }
+
+    if (strcmp(argv[1], "off") == 0) {
         return do_off();
     } else {
         fprintf(stderr, "Unknown command: %s\n", argv[1]);
