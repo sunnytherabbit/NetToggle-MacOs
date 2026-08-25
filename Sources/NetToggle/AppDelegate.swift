@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
     private var outPacketLoss = 0.90
     private var targetMode = "all"
 
+    private var currentRobloxIPs: [String] = []
+    private var refreshTimer: Timer?
+
     private let statusImage: NSImage? = {
         if #available(macOS 11.0, *) {
             return NSImage(systemSymbolName: "network", accessibilityDescription: nil)
@@ -238,12 +241,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
 
         if networkOn {
             HelperRunner.default.run(command: "off") { [weak self] success, message in
-                self?.helperRunning = false
+                guard let self = self else { return }
+                self.helperRunning = false
                 if success {
-                    self?.networkOn = false
-                    self?.updateMenu()
+                    self.networkOn = false
+                    self.stopRefreshTimer()
+                    self.updateMenu()
                 } else {
-                    self?.showError(message)
+                    self.showError(message)
                 }
             }
             return
@@ -259,6 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
                     return
                 }
 
+                self.currentRobloxIPs = ips
+
                 HelperRunner.default.run(
                     command: "roblox",
                     inDelayMs: self.inDelayMs,
@@ -266,10 +273,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
                     outDelayMs: self.outDelayMs,
                     outPacketLoss: self.outPacketLoss,
                     targetIPs: ips
-                ) { success, message in
+                ) { [weak self] success, message in
+                    guard let self = self else { return }
                     self.helperRunning = false
                     if success {
                         self.networkOn = true
+                        self.startRefreshTimer()
                         self.updateMenu()
                     } else {
                         self.showError(message)
@@ -284,12 +293,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
                 outDelayMs: outDelayMs,
                 outPacketLoss: outPacketLoss
             ) { [weak self] success, message in
-                self?.helperRunning = false
+                guard let self = self else { return }
+                self.helperRunning = false
                 if success {
-                    self?.networkOn = true
-                    self?.updateMenu()
+                    self.networkOn = true
+                    self.updateMenu()
                 } else {
-                    self?.showError(message)
+                    self.showError(message)
+                }
+            }
+        }
+    }
+
+    // MARK: - Roblox IP refresh
+
+    private func startRefreshTimer() {
+        stopRefreshTimer()
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.refreshRobloxIPs()
+        }
+    }
+
+    private func stopRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    private func refreshRobloxIPs() {
+        guard networkOn && targetMode == "roblox" && !helperRunning else { return }
+
+        RobloxTrafficFinder.default.findRemoteIPs { [weak self] newIPs, _ in
+            guard let self = self else { return }
+            guard !newIPs.isEmpty else { return }
+
+            let oldSet = Set(self.currentRobloxIPs)
+            let newSet = Set(newIPs)
+            guard newSet != oldSet else { return }
+
+            self.helperRunning = true
+            self.currentRobloxIPs = newIPs
+
+            HelperRunner.default.run(
+                command: "roblox-refresh",
+                inDelayMs: self.inDelayMs,
+                inPacketLoss: self.inPacketLoss,
+                outDelayMs: self.outDelayMs,
+                outPacketLoss: self.outPacketLoss,
+                targetIPs: newIPs
+            ) { [weak self] success, message in
+                guard let self = self else { return }
+                self.helperRunning = false
+                if !success {
+                    self.showError(message)
                 }
             }
         }
@@ -299,9 +355,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         if networkOn {
             HelperRunner.default.run(command: "off") { [weak self] _, _ in
                 self?.networkOn = false
+                self?.stopRefreshTimer()
                 NSApp.terminate(nil)
             }
         } else {
+            stopRefreshTimer()
             NSApp.terminate(nil)
         }
     }

@@ -39,11 +39,11 @@ final class HelperRunner {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
 
-        let isTarget = (command == "roblox")
+        let isTarget = (command == "roblox" || command == "roblox-refresh")
 
         if isTarget {
             process.arguments = [
-                "roblox",
+                command,
                 "\(inDelayMs)",
                 "\(inPacketLoss)",
                 "\(outDelayMs)",

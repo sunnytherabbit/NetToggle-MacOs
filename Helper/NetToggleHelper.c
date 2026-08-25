@@ -8,6 +8,7 @@
  * Usage:
  *   NetToggleHelper on <in_delay_ms> <in_plr> <out_delay_ms> <out_plr>
  *   NetToggleHelper roblox <in_delay_ms> <in_plr> <out_delay_ms> <out_plr>  (IP list on stdin)
+ *   NetToggleHelper roblox-refresh <in_delay_ms> <in_plr> <out_delay_ms> <out_plr> (IP list on stdin)
  *   NetToggleHelper off
  *
  * It is intentionally small and self-contained: it does not read
@@ -35,6 +36,10 @@
 /* Maximum remote IPs we will accept for a target mode. */
 #define MAX_IPS 256
 #define IP_LINE_MAX 256
+
+/* Stable path for the Roblox target IP table file. */
+#define ROBLOX_TABLE_FILE "/tmp/nettoggle_roblox_ips"
+#define ROBLOX_TABLE_NAME "nettoggle_roblox"
 
 static int run_program_silent(const char *path, char *const argv[])
 {
@@ -218,6 +223,30 @@ static void free_ips(char **ips, int count)
     }
 }
 
+static int write_ips_to_table_file(char **ips, int count)
+{
+    /* O_NOFOLLOW prevents a symlink attack on /tmp/nettoggle_roblox_ips. */
+    int fd = open(ROBLOX_TABLE_FILE,
+                  O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0644);
+    if (fd < 0) {
+        perror("open " ROBLOX_TABLE_FILE);
+        return 1;
+    }
+
+    for (int i = 0; i < count; i++) {
+        size_t len = strlen(ips[i]);
+        if (write(fd, ips[i], len) != (ssize_t)len ||
+            write(fd, "\n", 1) != 1) {
+            perror("write " ROBLOX_TABLE_FILE);
+            close(fd);
+            return 1;
+        }
+    }
+
+    close(fd);
+    return 0;
+}
+
 static int do_on(long in_delay_ms, double in_plr,
                  long out_delay_ms, double out_plr)
 {
@@ -257,49 +286,63 @@ static int do_target(long in_delay_ms, double in_plr,
         return 1;
     }
 
+    if (write_ips_to_table_file(ips, count) != 0) {
+        free_ips(ips, count);
+        return 1;
+    }
+
     /*
-     * Build explicit dummynet rules for each IP instead of using a PF table.
-     * Tables are convenient, but on macOS a table may not reliably refresh
-     * its contents across ruleset reloads, so per-IP rules are more robust.
+     * Load a dummynet ruleset that references a PF table. The table is
+     * populated from a separate file so we can refresh it without flushing
+     * the whole ruleset every time the Roblox IP list changes.
      */
-    size_t rules_size = 131072; /* enough for 256 IPs */
-    char *rules = malloc(rules_size);
-    if (rules == NULL) {
-        free_ips(ips, count);
-        return 1;
-    }
-
-    size_t pos = 0;
-    int ok = 1;
-
-    pos += (size_t)snprintf(rules + pos, rules_size - pos, "include \"/etc/pf.conf\"\n");
-    if (pos >= rules_size) ok = 0;
-
-    for (int i = 0; i < count && ok; i++) {
-        size_t n = (size_t)snprintf(rules + pos, rules_size - pos,
-            "dummynet out quick proto {tcp, udp} from any to %s pipe 65001\n", ips[i]);
-        if (n >= rules_size - pos) { ok = 0; break; }
-        pos += n;
-
-        n = (size_t)snprintf(rules + pos, rules_size - pos,
-            "dummynet in quick proto {tcp, udp} from %s to any pipe 65000\n", ips[i]);
-        if (n >= rules_size - pos) { ok = 0; break; }
-        pos += n;
-    }
-
-    if (!ok) {
-        fprintf(stderr, "Ruleset too large\n");
-        free(rules);
-        free_ips(ips, count);
-        return 1;
-    }
+    const char *rules =
+        "include \"/etc/pf.conf\"\n"
+        "table <" ROBLOX_TABLE_NAME "> persist file \"" ROBLOX_TABLE_FILE "\"\n"
+        "dummynet out quick proto {tcp, udp} from any to <" ROBLOX_TABLE_NAME "> pipe 65001\n"
+        "dummynet in quick proto {tcp, udp} from <" ROBLOX_TABLE_NAME "> to any pipe 65000\n";
 
     int rc = write_rules_and_load(rules);
-    free(rules);
     free_ips(ips, count);
 
     if (rc != 0) {
         fprintf(stderr, "pfctl rule load failed\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+static int do_target_refresh(void)
+{
+    char *ips[MAX_IPS];
+    int count = 0;
+
+    if (read_ips_from_stdin(ips, &count) != 0) {
+        free_ips(ips, count);
+        return 1;
+    }
+
+    if (count == 0) {
+        /* Not an error: Roblox may momentarily have no connections. */
+        free_ips(ips, count);
+        return 0;
+    }
+
+    if (write_ips_to_table_file(ips, count) != 0) {
+        free_ips(ips, count);
+        return 1;
+    }
+
+    /* Replace the existing table contents without flushing the ruleset. */
+    char *pfctl_argv[] = {
+        "/sbin/pfctl", "-q", "-t", ROBLOX_TABLE_NAME, "-T", "replace", "-f", ROBLOX_TABLE_FILE, NULL
+    };
+    int rc = run_program_silent("/sbin/pfctl", pfctl_argv);
+    free_ips(ips, count);
+
+    if (rc != 0) {
+        fprintf(stderr, "pfctl table replace failed\n");
         return 1;
     }
 
@@ -311,6 +354,11 @@ static int do_off(void)
     /* Restore the default ruleset. */
     char *pfctl_argv[] = {"/sbin/pfctl", "-q", "-f", "/etc/pf.conf", NULL};
     (void)run_program_silent("/sbin/pfctl", pfctl_argv);
+
+    /* Remove the persistent table and IP file. */
+    char *kill_table_argv[] = {"/sbin/pfctl", "-q", "-t", ROBLOX_TABLE_NAME, "-T", "kill", NULL};
+    (void)run_program_silent("/sbin/pfctl", kill_table_argv);
+    (void)unlink(ROBLOX_TABLE_FILE);
 
     char *dnctl_argv_in[] = {"/usr/sbin/dnctl", "-q", "pipe", "65000", "delete", NULL};
     char *dnctl_argv_out[] = {"/usr/sbin/dnctl", "-q", "pipe", "65001", "delete", NULL};
@@ -328,11 +376,16 @@ int main(int argc, char *argv[])
     }
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s on <in_delay> <in_plr> <out_delay> <out_plr> | roblox <in_delay> <in_plr> <out_delay> <out_plr> | off\n", argv[0]);
+        fprintf(stderr, "Usage: %s on <args> | roblox <args> | roblox-refresh <args> | off\n", argv[0]);
         return 1;
     }
 
     int is_target = (strcmp(argv[1], "roblox") == 0);
+    int is_refresh = (strcmp(argv[1], "roblox-refresh") == 0);
+
+    if (is_refresh) {
+        return do_target_refresh();
+    }
 
     if (strcmp(argv[1], "on") == 0 || is_target) {
         const char *in_delay  = (argc > 2) ? argv[2] : DEFAULT_DELAY;
