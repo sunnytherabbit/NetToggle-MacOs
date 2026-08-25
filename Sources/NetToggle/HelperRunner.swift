@@ -26,6 +26,7 @@ final class HelperRunner {
         inPacketLoss: Double = 0.0,
         outDelayMs: Int = 0,
         outPacketLoss: Double = 0.0,
+        targetIPs: [String] = [],
         completion: @escaping (Bool, String) -> Void
     ) {
         let path = helperPath
@@ -38,7 +39,17 @@ final class HelperRunner {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
 
-        if command == "on" {
+        let isTarget = (command == "roblox")
+
+        if isTarget {
+            process.arguments = [
+                "roblox",
+                "\(inDelayMs)",
+                "\(inPacketLoss)",
+                "\(outDelayMs)",
+                "\(outPacketLoss)"
+            ]
+        } else if command == "on" {
             process.arguments = [
                 "on",
                 "\(inDelayMs)",
@@ -54,6 +65,21 @@ final class HelperRunner {
         let errPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = errPipe
+
+        if isTarget {
+            let inPipe = Pipe()
+            process.standardInput = inPipe
+
+            var data = Data()
+            for ip in targetIPs {
+                if let line = "\(ip)\n".data(using: .utf8) {
+                    data.append(line)
+                }
+            }
+
+            inPipe.fileHandleForWriting.write(data)
+            inPipe.fileHandleForWriting.closeFile()
+        }
 
         process.terminationHandler = { proc in
             let outData = outPipe.fileHandleForReading.readDataToEndOfFile()

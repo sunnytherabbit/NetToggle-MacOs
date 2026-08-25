@@ -7,6 +7,7 @@
  *
  * Usage:
  *   NetToggleHelper on <in_delay_ms> <in_plr> <out_delay_ms> <out_plr>
+ *   NetToggleHelper roblox <in_delay_ms> <in_plr> <out_delay_ms> <out_plr>  (IP list on stdin)
  *   NetToggleHelper off
  *
  * It is intentionally small and self-contained: it does not read
@@ -20,6 +21,8 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
 
 #define PIPE_IN  65000
@@ -28,6 +31,10 @@
 /* Default profile if no arguments are supplied. */
 #define DEFAULT_DELAY "0"
 #define DEFAULT_PLR   "0.90"
+
+/* Maximum remote IPs we will accept for a target mode. */
+#define MAX_IPS 256
+#define IP_LINE_MAX 256
 
 static int run_program_silent(const char *path, char *const argv[])
 {
@@ -114,8 +121,8 @@ static int parse_profile(const char *delay_arg, const char *plr_arg,
     return 0;
 }
 
-static int do_on(long in_delay_ms, double in_plr,
-                 long out_delay_ms, double out_plr)
+static int config_pipes(long in_delay_ms, double in_plr,
+                        long out_delay_ms, double out_plr)
 {
     char in_delay_str[32], in_plr_str[32];
     char out_delay_str[32], out_plr_str[32];
@@ -142,12 +149,149 @@ static int do_on(long in_delay_ms, double in_plr,
         return 1;
     }
 
+    return 0;
+}
+
+static int is_valid_ip(const char *s)
+{
+    char buf[INET6_ADDRSTRLEN];
+    size_t len = strlen(s);
+    if (len == 0 || len >= sizeof(buf)) return 0;
+
+    /* Copy and trim whitespace. */
+    const char *start = s;
+    while (*start && isspace((unsigned char)*start)) start++;
+    const char *end = s + len - 1;
+    while (end > start && isspace((unsigned char)*end)) end--;
+    size_t trimmed = end - start + 1;
+    if (trimmed == 0 || trimmed >= sizeof(buf)) return 0;
+    memcpy(buf, start, trimmed);
+    buf[trimmed] = '\0';
+
+    /* Reject the wildcard. */
+    if (strcmp(buf, "*") == 0) return 0;
+
+    struct in_addr addr4;
+    struct in6_addr addr6;
+    if (inet_pton(AF_INET, buf, &addr4) == 1) {
+        /* Reject 0.0.0.0 and 127.0.0.0/8. */
+        unsigned char *b = (unsigned char *)&addr4;
+        if (b[0] == 0) return 0;
+        if (b[0] == 127) return 0;
+        return 1;
+    }
+    if (inet_pton(AF_INET6, buf, &addr6) == 1) {
+        /* Reject loopback ::1. */
+        if (memcmp(&addr6, &in6addr_loopback, sizeof(addr6)) == 0) return 0;
+        return 1;
+    }
+    return 0;
+}
+
+static int read_ips_from_stdin(char **ips, int *count)
+{
+    *count = 0;
+    char line[IP_LINE_MAX];
+    while (fgets(line, sizeof(line), stdin) != NULL && *count < MAX_IPS) {
+        /* Remove trailing newline. */
+        size_t len = strlen(line);
+        if (len > 0 && line[len - 1] == '\n') line[--len] = '\0';
+        if (len > 0 && line[len - 1] == '\r') line[--len] = '\0';
+
+        if (!is_valid_ip(line)) continue;
+
+        ips[*count] = strdup(line);
+        if (ips[*count] == NULL) {
+            fprintf(stderr, "Out of memory\n");
+            return 1;
+        }
+        (*count)++;
+    }
+    return 0;
+}
+
+static void free_ips(char **ips, int count)
+{
+    for (int i = 0; i < count; i++) {
+        free(ips[i]);
+        ips[i] = NULL;
+    }
+}
+
+static int do_on(long in_delay_ms, double in_plr,
+                 long out_delay_ms, double out_plr)
+{
+    if (config_pipes(in_delay_ms, in_plr, out_delay_ms, out_plr) != 0) return 1;
+
     const char *rules =
         "include \"/etc/pf.conf\"\n"
         "dummynet in all pipe 65000\n"
         "dummynet out all pipe 65001\n";
 
     if (write_rules_and_load(rules) != 0) {
+        fprintf(stderr, "pfctl rule load failed\n");
+        return 1;
+    }
+
+    return 0;
+}
+
+static int do_target(long in_delay_ms, double in_plr,
+                     long out_delay_ms, double out_plr,
+                     const char *table_name)
+{
+    char *ips[MAX_IPS];
+    int count = 0;
+
+    if (read_ips_from_stdin(ips, &count) != 0) {
+        free_ips(ips, count);
+        return 1;
+    }
+
+    if (count == 0) {
+        fprintf(stderr, "No target IPs found on stdin\n");
+        return 1;
+    }
+
+    if (config_pipes(in_delay_ms, in_plr, out_delay_ms, out_plr) != 0) {
+        free_ips(ips, count);
+        return 1;
+    }
+
+    /* Build a ruleset with a PF table of target IPs. */
+    size_t rules_size = 8192;
+    char *rules = malloc(rules_size);
+    if (rules == NULL) {
+        free_ips(ips, count);
+        return 1;
+    }
+
+    size_t pos = 0;
+#define APPEND(...) do { \
+        int n = snprintf(rules + pos, rules_size - pos, __VA_ARGS__); \
+        if (n < 0 || (size_t)n >= rules_size - pos) { \
+            fprintf(stderr, "Ruleset too large\n"); \
+            free(rules); free_ips(ips, count); return 1; \
+        } \
+        pos += (size_t)n; \
+    } while (0)
+
+    APPEND("include \"/etc/pf.conf\"\n");
+    APPEND("table <%s> persist { ", table_name);
+    for (int i = 0; i < count; i++) {
+        APPEND("%s%s", ips[i], (i < count - 1) ? ", " : "");
+    }
+    APPEND(" }\n");
+    APPEND("dummynet out quick proto {tcp, udp} from any to <%s> pipe 65001\n", table_name);
+    APPEND("dummynet in quick proto {tcp, udp} from <%s> to any pipe 65000\n", table_name);
+
+#undef APPEND
+
+    int rc = write_rules_and_load(rules);
+    free(rules);
+    free_ips(ips, count);
+
+    if (rc != 0) {
         fprintf(stderr, "pfctl rule load failed\n");
         return 1;
     }
@@ -177,11 +321,13 @@ int main(int argc, char *argv[])
     }
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s on <in_delay> <in_plr> <out_delay> <out_plr> | off\n", argv[0]);
+        fprintf(stderr, "Usage: %s on <in_delay> <in_plr> <out_delay> <out_plr> | roblox <in_delay> <in_plr> <out_delay> <out_plr> | off\n", argv[0]);
         return 1;
     }
 
-    if (strcmp(argv[1], "on") == 0) {
+    int is_target = (strcmp(argv[1], "roblox") == 0);
+
+    if (strcmp(argv[1], "on") == 0 || is_target) {
         const char *in_delay  = (argc > 2) ? argv[2] : DEFAULT_DELAY;
         const char *in_plr    = (argc > 3) ? argv[3] : DEFAULT_PLR;
         const char *out_delay = (argc > 4) ? argv[4] : DEFAULT_DELAY;
@@ -193,7 +339,12 @@ int main(int argc, char *argv[])
             parse_profile(out_delay, out_plr, &out_delay_ms, &out_plr_v) != 0) {
             return 1;
         }
-        return do_on(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
+
+        if (is_target) {
+            return do_target(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v, "nettoggle_roblox");
+        } else {
+            return do_on(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
+        }
     } else if (strcmp(argv[1], "off") == 0) {
         return do_off();
     } else {

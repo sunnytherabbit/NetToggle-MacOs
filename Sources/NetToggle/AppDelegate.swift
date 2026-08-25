@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
     private var statusLabelItem: NSMenuItem?
     private var toggleItem: NSMenuItem?
     private var hotkeyLabelItem: NSMenuItem?
+    private var targetLabelItem: NSMenuItem?
     private var inProfileLabelItem: NSMenuItem?
     private var outProfileLabelItem: NSMenuItem?
 
@@ -19,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
     private var inPacketLoss = 0.90
     private var outDelayMs = 0
     private var outPacketLoss = 0.90
+    private var targetMode = "all"
 
     private let statusImage: NSImage? = {
         if #available(macOS 11.0, *) {
@@ -58,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         statusLabelItem = NSMenuItem(title: "Network: Off", action: nil, keyEquivalent: "")
         menu.addItem(statusLabelItem!)
 
+        targetLabelItem = NSMenuItem(title: "Target: All", action: nil, keyEquivalent: "")
+        menu.addItem(targetLabelItem!)
+
         inProfileLabelItem = NSMenuItem(title: "In: 0 ms / 0%", action: nil, keyEquivalent: "")
         menu.addItem(inProfileLabelItem!)
 
@@ -89,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
 
     private func updateMenu() {
         statusLabelItem?.title = "Network: \(networkOn ? "On" : "Off")"
+        targetLabelItem?.title = "Target: \(targetMode == "roblox" ? "Roblox" : "All")"
         inProfileLabelItem?.title = String(format: "In: %d ms / %.0f%%", inDelayMs, inPacketLoss * 100)
         outProfileLabelItem?.title = String(format: "Out: %d ms / %.0f%%", outDelayMs, outPacketLoss * 100)
         toggleItem?.title = networkOn ? "Turn Network Off" : "Turn Network On"
@@ -145,6 +151,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
             outPacketLoss = 0.90
         }
 
+        if defaults.object(forKey: "targetMode") != nil {
+            targetMode = defaults.string(forKey: "targetMode") ?? "all"
+        }
+
         inDelayMs = max(0, min(60000, inDelayMs))
         outDelayMs = max(0, min(60000, outDelayMs))
         inPacketLoss = max(0.0, min(1.0, inPacketLoss))
@@ -157,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         defaults.set(inPacketLoss, forKey: "inPacketLoss")
         defaults.set(outDelayMs, forKey: "outDelayMs")
         defaults.set(outPacketLoss, forKey: "outPacketLoss")
+        defaults.set(targetMode, forKey: "targetMode")
     }
 
     private func formatHotkey(keyCode: UInt16, flags: UInt64) -> String {
@@ -197,15 +208,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
             inDelayMs: inDelayMs,
             inPlr: inPacketLoss,
             outDelayMs: outDelayMs,
-            outPlr: outPacketLoss
+            outPlr: outPacketLoss,
+            targetMode: targetMode
         )
 
-        settings.onSave = { [weak self] code, flags, inDelay, inPlr, outDelay, outPlr in
+        settings.onSave = { [weak self] code, flags, inDelay, inPlr, outDelay, outPlr, target in
             self?.hotkeyManager?.updateHotkey(keyCode: code, modifierFlags: flags)
             self?.inDelayMs = inDelay
             self?.inPacketLoss = inPlr
             self?.outDelayMs = outDelay
             self?.outPacketLoss = outPlr
+            self?.targetMode = target
             self?.saveSettings()
             self?.updateMenu()
         }
@@ -223,8 +236,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         guard !helperRunning else { return }
         helperRunning = true
 
-        let command = networkOn ? "off" : "on"
-        if command == "on" {
+        if networkOn {
+            HelperRunner.default.run(command: "off") { [weak self] success, message in
+                self?.helperRunning = false
+                if success {
+                    self?.networkOn = false
+                    self?.updateMenu()
+                } else {
+                    self?.showError(message)
+                }
+            }
+            return
+        }
+
+        if targetMode == "roblox" {
+            RobloxTrafficFinder.default.findRemoteIPs { [weak self] ips, error in
+                guard let self = self else { return }
+
+                if ips.isEmpty {
+                    self.helperRunning = false
+                    self.showError(error.isEmpty ? "Could not find Roblox traffic." : error)
+                    return
+                }
+
+                HelperRunner.default.run(
+                    command: "roblox",
+                    inDelayMs: self.inDelayMs,
+                    inPacketLoss: self.inPacketLoss,
+                    outDelayMs: self.outDelayMs,
+                    outPacketLoss: self.outPacketLoss,
+                    targetIPs: ips
+                ) { success, message in
+                    self.helperRunning = false
+                    if success {
+                        self.networkOn = true
+                        self.updateMenu()
+                    } else {
+                        self.showError(message)
+                    }
+                }
+            }
+        } else {
             HelperRunner.default.run(
                 command: "on",
                 inDelayMs: inDelayMs,
@@ -234,17 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
             ) { [weak self] success, message in
                 self?.helperRunning = false
                 if success {
-                    self?.networkOn = !(self?.networkOn ?? false)
-                    self?.updateMenu()
-                } else {
-                    self?.showError(message)
-                }
-            }
-        } else {
-            HelperRunner.default.run(command: "off") { [weak self] success, message in
-                self?.helperRunning = false
-                if success {
-                    self?.networkOn = false
+                    self?.networkOn = true
                     self?.updateMenu()
                 } else {
                     self?.showError(message)

@@ -7,9 +7,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var initialInPlr: Double
     private var initialOutDelayMs: Int
     private var initialOutPlr: Double
+    private var initialTargetMode: String
 
     private let captureView = KeyCaptureView()
     private let infoLabel = NSTextField(labelWithString: "Click below, then press the hotkey you want to use.")
+    private let targetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
 
     private let inDelayField = NSTextField()
     private let inPlrField = NSTextField()
@@ -25,7 +27,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var capturedKeyCode: Int
     private var capturedFlags: UInt
 
-    var onSave: ((Int, UInt, Int, Double, Int, Double) -> Void)?
+    var onSave: ((Int, UInt, Int, Double, Int, Double, String) -> Void)?
     var onDone: (() -> Void)?
 
     init(
@@ -34,7 +36,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         inDelayMs: Int,
         inPlr: Double,
         outDelayMs: Int,
-        outPlr: Double
+        outPlr: Double,
+        targetMode: String
     ) {
         self.initialKeyCode = keyCode
         self.initialFlags = flags
@@ -42,12 +45,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         self.initialInPlr = inPlr
         self.initialOutDelayMs = outDelayMs
         self.initialOutPlr = outPlr
+        self.initialTargetMode = targetMode
 
         self.capturedKeyCode = keyCode
         self.capturedFlags = flags
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 500),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -66,10 +70,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func setupContent() {
         guard let contentView = window?.contentView else { return }
 
-        infoLabel.frame = NSRect(x: 20, y: 420, width: 520, height: 24)
+        infoLabel.frame = NSRect(x: 20, y: 455, width: 520, height: 24)
         infoLabel.alignment = .center
 
-        captureView.frame = NSRect(x: 20, y: 345, width: 520, height: 70)
+        captureView.frame = NSRect(x: 20, y: 380, width: 520, height: 70)
         captureView.wantsLayer = true
         captureView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
         captureView.layer?.borderColor = NSColor.gray.cgColor
@@ -80,10 +84,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
 
         let note = NSTextField(labelWithString: "Traffic can be shaped differently for each direction.")
-        note.frame = NSRect(x: 20, y: 320, width: 520, height: 18)
+        note.frame = NSRect(x: 20, y: 355, width: 520, height: 18)
         note.alignment = .center
         note.textColor = .secondaryLabelColor
         note.font = NSFont.systemFont(ofSize: 11)
+
+        // Target selector
+        let targetLabel = NSTextField(labelWithString: "Target:")
+        targetLabel.frame = NSRect(x: 130, y: 325, width: 80, height: 22)
+        targetLabel.alignment = .right
+
+        targetPopup.frame = NSRect(x: 220, y: 322, width: 200, height: 26)
+        targetPopup.addItems(withTitles: ["All traffic", "Roblox only"])
+        targetPopup.selectItem(withTitle: initialTargetMode == "roblox" ? "Roblox only" : "All traffic")
 
         // Inbound column
         let inTitle = sectionTitle("Inbound", y: 300)
@@ -145,7 +158,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         cancelButton.target = self
         cancelButton.action = #selector(cancel(_:))
 
-        [infoLabel, captureView, note,
+        [infoLabel, captureView, note, targetLabel, targetPopup,
          inTitle, inDelayLabel, inDelayField, inPlrLabel, inPlrField, inPlrSlider,
          outTitle, outDelayLabel, outDelayField, outPlrLabel, outPlrField, outPlrSlider,
          hint, saveButton, cancelButton].forEach {
@@ -223,7 +236,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             return
         }
 
-        onSave?(capturedKeyCode, capturedFlags, inD, inP, outD, outP)
+        let targetMode = (targetPopup.titleOfSelectedItem == "Roblox only") ? "roblox" : "all"
+
+        onSave?(capturedKeyCode, capturedFlags, inD, inP, outD, outP, targetMode)
         window?.close()
     }
 
