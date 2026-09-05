@@ -39,12 +39,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
 
         hotkeyManager = HotkeyManager(delegate: self)
 
-        let trusted = checkAccessibility()
-        if trusted {
+        if checkAccessibility() {
             hotkeyManager?.registerHotkey()
         }
 
         updateMenu()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if checkAccessibility() {
+            hotkeyManager?.registerHotkey()
+        }
     }
 
     private func buildStatusItem() {
