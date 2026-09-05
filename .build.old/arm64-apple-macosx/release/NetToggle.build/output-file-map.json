@@ -1,0 +1,43 @@
+{
+  "": {
+    "dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/NetToggle.d",
+    "object": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/NetToggle.o",
+    "swift-dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/primary.swiftdeps"
+  },
+  "/Users/tl/Desktop/RobloxLS/Sources/NetToggle/AppDelegate.swift": {
+    "object": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/AppDelegate.swift.o",
+    "swiftmodule": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/AppDelegate~partial.swiftmodule",
+    "swift-dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/AppDelegate.swiftdeps",
+    "diagnostics": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/AppDelegate.dia"
+  },
+  "/Users/tl/Desktop/RobloxLS/Sources/NetToggle/HelperRunner.swift": {
+    "object": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HelperRunner.swift.o",
+    "swiftmodule": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HelperRunner~partial.swiftmodule",
+    "swift-dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HelperRunner.swiftdeps",
+    "diagnostics": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HelperRunner.dia"
+  },
+  "/Users/tl/Desktop/RobloxLS/Sources/NetToggle/HotkeyManager.swift": {
+    "object": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HotkeyManager.swift.o",
+    "swiftmodule": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HotkeyManager~partial.swiftmodule",
+    "swift-dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HotkeyManager.swiftdeps",
+    "diagnostics": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/HotkeyManager.dia"
+  },
+  "/Users/tl/Desktop/RobloxLS/Sources/NetToggle/RobloxTrafficFinder.swift": {
+    "object": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/RobloxTrafficFinder.swift.o",
+    "swiftmodule": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/RobloxTrafficFinder~partial.swiftmodule",
+    "swift-dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/RobloxTrafficFinder.swiftdeps",
+    "diagnostics": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/RobloxTrafficFinder.dia"
+  },
+  "/Users/tl/Desktop/RobloxLS/Sources/NetToggle/SettingsWindowController.swift": {
+    "object": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/SettingsWindowController.swift.o",
+    "swiftmodule": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/SettingsWindowController~partial.swiftmodule",
+    "swift-dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/SettingsWindowController.swiftdeps",
+    "diagnostics": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/SettingsWindowController.dia"
+  },
+  "/Users/tl/Desktop/RobloxLS/Sources/NetToggle/main.swift": {
+    "object": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/main.swift.o",
+    "swiftmodule": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/main.swiftdeps",
+    "diagnostics": "/Users/tl/Desktop/RobloxLS/.build/arm64-apple-macosx/release/NetToggle.build/main.dia"
+  }
+}

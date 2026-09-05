@@ -40,8 +40,9 @@ final class HelperRunner {
         process.executableURL = URL(fileURLWithPath: path)
 
         let isTarget = (command == "roblox" || command == "roblox-refresh")
+        let isEnsureAll = (command == "ensure-all")
 
-        if isTarget {
+        if isTarget || isEnsureAll {
             process.arguments = [
                 command,
                 "\(inDelayMs)",

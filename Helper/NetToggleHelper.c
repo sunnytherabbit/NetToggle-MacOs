@@ -254,14 +254,15 @@ static int write_ips_to_table_file(char **ips, int count)
 }
 
 /*
- * Check whether the dummynet rules referencing nettoggle_roblox are still
- * loaded. On macOS something else (a VPN reconnect, firewall refresh, etc.)
- * may flush the ruleset without killing the persistent table, leaving the
- * table populated but the shaping rules gone.
+ * Check whether our dummynet rules are still loaded. On macOS something
+ * else (a VPN reconnect, firewall refresh, etc.) may flush the ruleset
+ * without killing the pipes or tables, leaving the shaping silently gone.
+ * Both the "all" ruleset and the Roblox ruleset reference pipe 65001, so
+ * one check covers every mode.
  */
 static int ruleset_is_loaded(void)
 {
-    FILE *fp = popen("/sbin/pfctl -s dummynet", "r");
+    FILE *fp = popen("/sbin/pfctl -s dummynet 2>/dev/null", "r");
     if (fp == NULL) {
         return 0;
     }
@@ -269,7 +270,7 @@ static int ruleset_is_loaded(void)
     char line[512];
     int found = 0;
     while (fgets(line, sizeof(line), fp) != NULL) {
-        if (strstr(line, ROBLOX_TABLE_NAME) != NULL) {
+        if (strstr(line, "pipe 65001") != NULL) {
             found = 1;
             break;
         }
@@ -279,6 +280,40 @@ static int ruleset_is_loaded(void)
     return found && (status == 0 || WEXITSTATUS(status) == 0);
 }
 
+static int pf_is_enabled(void)
+{
+    FILE *fp = popen("/sbin/pfctl -s info 2>/dev/null", "r");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    char line[512];
+    int found = 0;
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strstr(line, "Status: Enabled") != NULL) {
+            found = 1;
+            break;
+        }
+    }
+
+    int status = pclose(fp);
+    return found && (status == 0 || WEXITSTATUS(status) == 0);
+}
+
+/* pfctl -e is a no-op-ish "already enabled" error when pf is on; ignored. */
+static void ensure_pf_enabled(void)
+{
+    if (!pf_is_enabled()) {
+        char *pfctl_argv[] = {"/sbin/pfctl", "-q", "-e", NULL};
+        (void)run_program_silent("/sbin/pfctl", pfctl_argv);
+    }
+}
+
+static const char *all_ruleset =
+    "include \"/etc/pf.conf\"\n"
+    "dummynet in all pipe 65000\n"
+    "dummynet out all pipe 65001\n";
+
 static int load_roblox_ruleset(void)
 {
     return write_rules_and_load(roblox_ruleset);
@@ -287,16 +322,35 @@ static int load_roblox_ruleset(void)
 static int do_on(long in_delay_ms, double in_plr,
                  long out_delay_ms, double out_plr)
 {
+    ensure_pf_enabled();
     if (config_pipes(in_delay_ms, in_plr, out_delay_ms, out_plr) != 0) return 1;
 
-    const char *rules =
-        "include \"/etc/pf.conf\"\n"
-        "dummynet in all pipe 65000\n"
-        "dummynet out all pipe 65001\n";
-
-    if (write_rules_and_load(rules) != 0) {
+    if (write_rules_and_load(all_ruleset) != 0) {
         fprintf(stderr, "pfctl rule load failed\n");
         return 1;
+    }
+
+    return 0;
+}
+
+/*
+ * Watchdog for "all traffic" mode: reconfigure pipes and reload the ruleset
+ * only if pf got disabled or the ruleset was flushed by something else.
+ */
+static int do_ensure_all(long in_delay_ms, double in_plr,
+                         long out_delay_ms, double out_plr)
+{
+    ensure_pf_enabled();
+
+    if (config_pipes(in_delay_ms, in_plr, out_delay_ms, out_plr) != 0) {
+        return 1;
+    }
+
+    if (!ruleset_is_loaded()) {
+        if (write_rules_and_load(all_ruleset) != 0) {
+            fprintf(stderr, "pfctl rule load failed\n");
+            return 1;
+        }
     }
 
     return 0;
@@ -349,15 +403,26 @@ static int do_target_refresh(long in_delay_ms, double in_plr,
         return 1;
     }
 
-    if (count == 0) {
-        /* Not an error: Roblox may momentarily have no connections. */
-        free_ips(ips, count);
-        return 0;
-    }
+    ensure_pf_enabled();
 
     if (config_pipes(in_delay_ms, in_plr, out_delay_ms, out_plr) != 0) {
         free_ips(ips, count);
         return 1;
+    }
+
+    if (count == 0) {
+        /*
+         * Roblox may momentarily have no connections. The ruleset may still
+         * have been flushed, so keep the watchdog behavior and bail early on
+         * the table update only.
+         */
+        if (!ruleset_is_loaded() && load_roblox_ruleset() != 0) {
+            fprintf(stderr, "pfctl rule load failed\n");
+            free_ips(ips, count);
+            return 1;
+        }
+        free_ips(ips, count);
+        return 0;
     }
 
     if (write_ips_to_table_file(ips, count) != 0) {
@@ -417,14 +482,15 @@ int main(int argc, char *argv[])
     }
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s on <args> | roblox <args> | roblox-refresh <args> | off\n", argv[0]);
+        fprintf(stderr, "Usage: %s on <args> | roblox <args> | roblox-refresh <args> | ensure-all <args> | off\n", argv[0]);
         return 1;
     }
 
     int is_target = (strcmp(argv[1], "roblox") == 0);
     int is_refresh = (strcmp(argv[1], "roblox-refresh") == 0);
+    int is_ensure_all = (strcmp(argv[1], "ensure-all") == 0);
 
-    if (is_refresh || is_target || strcmp(argv[1], "on") == 0) {
+    if (is_refresh || is_target || is_ensure_all || strcmp(argv[1], "on") == 0) {
         const char *in_delay  = (argc > 2) ? argv[2] : DEFAULT_DELAY;
         const char *in_plr    = (argc > 3) ? argv[3] : DEFAULT_PLR;
         const char *out_delay = (argc > 4) ? argv[4] : DEFAULT_DELAY;
@@ -439,6 +505,10 @@ int main(int argc, char *argv[])
 
         if (is_refresh) {
             return do_target_refresh(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
+        }
+
+        if (is_ensure_all) {
+            return do_ensure_all(in_delay_ms, in_plr_v, out_delay_ms, out_plr_v);
         }
 
         if (is_target) {

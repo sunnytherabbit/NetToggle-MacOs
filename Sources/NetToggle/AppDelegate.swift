@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
 
     private var networkOn = false
     private var helperRunning = false
+    private var refreshRunning = false
 
     private var statusLabelItem: NSMenuItem?
     private var toggleItem: NSMenuItem?
@@ -297,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
                 self.helperRunning = false
                 if success {
                     self.networkOn = true
+                    self.startRefreshTimer()
                     self.updateMenu()
                 } else {
                     self.showError(message)
@@ -305,13 +307,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         }
     }
 
-    // MARK: - Roblox IP refresh
+    // MARK: - Watchdog refresh
 
     private func startRefreshTimer() {
         stopRefreshTimer()
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.refreshRobloxIPs()
+            self?.refreshRules()
         }
     }
 
@@ -320,30 +322,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, HotkeyManagerDelegate 
         refreshTimer = nil
     }
 
-    private func refreshRobloxIPs() {
-        guard networkOn && targetMode == "roblox" && !helperRunning else { return }
+    private func refreshRules() {
+        guard networkOn && !refreshRunning else { return }
 
-        RobloxTrafficFinder.default.findRemoteIPs { [weak self] newIPs, _ in
-            guard let self = self else { return }
-            guard !newIPs.isEmpty else { return }
+        if targetMode == "roblox" {
+            refreshRunning = true
 
-            let oldSet = Set(self.currentRobloxIPs)
-            let newSet = Set(newIPs)
-            guard newSet != oldSet else { return }
+            RobloxTrafficFinder.default.findRemoteIPs { [weak self] newIPs, _ in
+                guard let self = self else { return }
 
-            self.helperRunning = true
-            self.currentRobloxIPs = newIPs
+                self.currentRobloxIPs = newIPs
+
+                HelperRunner.default.run(
+                    command: "roblox-refresh",
+                    inDelayMs: self.inDelayMs,
+                    inPacketLoss: self.inPacketLoss,
+                    outDelayMs: self.outDelayMs,
+                    outPacketLoss: self.outPacketLoss,
+                    targetIPs: newIPs
+                ) { [weak self] success, message in
+                    guard let self = self else { return }
+                    self.refreshRunning = false
+
+                    if !self.networkOn {
+                        HelperRunner.default.run(command: "off", inDelayMs: 0, inPacketLoss: 0, outDelayMs: 0, outPacketLoss: 0) { _, _ in }
+                        return
+                    }
+
+                    if !success {
+                        self.showError(message)
+                    }
+                }
+            }
+        } else {
+            refreshRunning = true
 
             HelperRunner.default.run(
-                command: "roblox-refresh",
-                inDelayMs: self.inDelayMs,
-                inPacketLoss: self.inPacketLoss,
-                outDelayMs: self.outDelayMs,
-                outPacketLoss: self.outPacketLoss,
-                targetIPs: newIPs
+                command: "ensure-all",
+                inDelayMs: inDelayMs,
+                inPacketLoss: inPacketLoss,
+                outDelayMs: outDelayMs,
+                outPacketLoss: outPacketLoss
             ) { [weak self] success, message in
                 guard let self = self else { return }
-                self.helperRunning = false
+                self.refreshRunning = false
+
+                if !self.networkOn {
+                    HelperRunner.default.run(command: "off", inDelayMs: 0, inPacketLoss: 0, outDelayMs: 0, outPacketLoss: 0) { _, _ in }
+                    return
+                }
+
                 if !success {
                     self.showError(message)
                 }
